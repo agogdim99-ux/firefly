@@ -1,0 +1,509 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}[hidden]{display:none!important}</style>
+<title>반딧불 사냥</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@400;600&display=swap">
+<style>
+/* layout: one-screen canvas field under a slim HUD; centered overlay card for start / pause / game over */
+:root{
+  --night:#0a1219; --fly:#d6ff72; --lamp:#ffc964; --thorn:#ff5a6a; --sky:#9fe8ff; --petal:#ffb3c8;
+  --ink:#e6eee2; --mute:#8fa39a; --line:#ffffff14; --card:#0e1b25e0;
+  --display:"Gowun Batang","Nanum Myeongjo","Batang",serif;
+  --ui:"IBM Plex Sans KR","Malgun Gothic",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--night);color:var(--ink);font-family:var(--ui);overflow:hidden;user-select:none;-webkit-user-select:none}
+#app{height:100%;display:flex;flex-direction:column}
+.hud{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-block:10px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  border-bottom:1px solid var(--line);font-size:12px;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.hud .stat{display:flex;align-items:baseline;gap:6px}
+.hud b{color:var(--ink);font-size:17px;font-weight:600;letter-spacing:0}
+.hud .lives{color:var(--lamp);font-size:15px;letter-spacing:2px}
+.hud .spacer{flex:1}
+.icon-btn{background:none;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer}
+.icon-btn:hover{border-color:var(--mute)}
+button:focus-visible{outline:2px solid var(--fly);outline-offset:2px}
+#stage{position:relative;flex:1;min-height:0;touch-action:none;cursor:crosshair}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;overflow:auto;padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 22px;max-width:360px;width:100%;text-align:center;display:grid;gap:14px;backdrop-filter:blur(6px)}
+.card h1{font-family:var(--display);font-weight:700;font-size:38px;line-height:1.1;margin:0;color:var(--fly);text-wrap:balance;text-shadow:0 0 24px #d6ff7255}
+.card h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0;color:var(--lamp);text-wrap:balance}
+.card p{margin:0;color:var(--mute);font-size:14px;line-height:1.6}
+.card .quote{font-family:var(--display);color:var(--ink);font-size:17px}
+.modes{display:grid;gap:10px}
+.mode{display:grid;gap:3px;text-align:left;border-radius:12px;padding:13px 15px;cursor:pointer;font:inherit;border:1px solid var(--line);background:#ffffff08;color:var(--ink)}
+.mode strong{font-size:16px;font-weight:600}
+.mode span{font-size:12.5px;color:var(--mute);line-height:1.5}
+.mode.walk{border-color:#d6ff7255;background:#d6ff7212}
+.mode.walk strong{color:var(--fly)}
+.mode.challenge strong{color:var(--lamp)}
+.mode:hover{background:#ffffff12}
+.keys{font-size:12.5px;color:var(--mute);line-height:1.6}
+.big{font-size:44px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink);line-height:1}
+.row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.cta{background:var(--fly);color:#10200a;border:0;border-radius:10px;padding:12px 18px;font:600 15px var(--ui);cursor:pointer}
+.cta.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
+.cta:hover{filter:brightness(1.08)}
+.total{font-size:13px;color:var(--fly)}
+</style></head><body>
+
+<div id="app">
+  <div class="hud">
+    <div class="stat"><span id="scoreLabel">반딧불</span> <b id="score">0</b></div>
+    <div class="stat" id="multBox">연속 <b id="mult">×1</b></div>
+    <div class="stat">별 <b id="stars">0</b></div>
+    <div class="stat"><b id="phaseName" style="font-size:13px;font-weight:400;color:var(--mute)">해질녘</b></div>
+    <div class="lives" id="lives" aria-label="남은 등불">●●●</div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="muteBtn" type="button">소리 켜짐</button>
+    <button class="icon-btn" id="pauseBtn" type="button">쉬기</button>
+  </div>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="overlay" id="startScreen">
+      <div class="card">
+        <h1>반딧불 사냥</h1>
+        <p>등불을 들고 밤 들판을 걸어요. 반딧불을 모으면 꽃이 피고, 열 마리마다 하늘에 별이 하나씩 떠요.</p>
+        <div class="modes">
+          <button class="mode walk" id="walkBtn" type="button"><strong>밤 산책</strong><span>가시도 시간 제한도 없어요. 음악 들으며 천천히 쉬어 가요.</span></button>
+          <button class="mode challenge" id="challengeBtn" type="button"><strong>도전</strong><span>날아드는 가시 씨앗을 피하며 최고 점수에 도전해요.</span></button>
+        </div>
+        <p class="keys">폰은 화면 아무 곳에나 대고 끌고, PC는 마우스나 방향키로 움직여요. 소리를 켜면 더 좋아요.</p>
+        <p class="total" id="totalLine"></p>
+      </div>
+    </div>
+    <div class="overlay" id="pauseScreen" hidden>
+      <div class="card">
+        <h2>잠깐 쉬어 가요</h2>
+        <p class="quote" id="pauseQuote"></p>
+        <div class="row">
+          <button class="cta" id="resumeBtn" type="button">계속하기</button>
+          <button class="cta ghost" id="homeBtn1" type="button">처음으로</button>
+        </div>
+      </div>
+    </div>
+    <div class="overlay" id="overScreen" hidden>
+      <div class="card">
+        <h2>등불이 잠들었어요</h2>
+        <div class="big" id="finalScore">0</div>
+        <p id="overLine"></p>
+        <p class="quote" id="overQuote"></p>
+        <div class="row">
+          <button class="cta" id="againBtn" type="button">다시 하기</button>
+          <button class="cta ghost" id="homeBtn2" type="button">처음으로</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const stage = $('stage'), cv = $('cv'), ctx = cv.getContext('2d');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let W = 0, H = 0, DPR = 1;
+
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+let best = +(store('firefly-best') || 0);
+let totalAll = +(store('firefly-total') || 0);
+let muted = store('firefly-muted') === '1';
+
+const PHRASES = ['오늘도 잘 버텼어요', '천천히 해도 괜찮아요', '숨 한 번 크게 쉬어 볼까요', '당신의 밤이 조금 더 밝아졌어요',
+  '작은 빛도 모이면 별이 돼요', '지금 이대로도 충분해요', '쉬어 가도 괜찮아요', '오늘 하루 수고 많았어요',
+  '어깨에 힘을 살짝 빼 봐요', '느려도 앞으로 가고 있어요', '좋은 꿈 꿀 것 같은 밤이에요', '당신은 생각보다 잘하고 있어요'];
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const PHASES = [
+  { name: '해질녘', top: '#1d1633', bot: '#4a3356' },
+  { name: '초저녁', top: '#0a1020', bot: '#1d3550' },
+  { name: '한밤', top: '#060c12', bot: '#13283a' },
+  { name: '깊은 숲', top: '#03141a', bot: '#0e3a3c' },
+  { name: '새벽', top: '#141a35', bot: '#5a3c58' },
+];
+const FLOWER_COLORS = ['#d6ff72', '#ffc964', '#ffb3c8', '#9fe8ff', '#e6c8ff'];
+
+/* ---------- sprites ---------- */
+function glowSprite(color, size) {
+  const c = document.createElement('canvas'); c.width = c.height = size * 2;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(size, size, 0, size, size, size);
+  gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.12, color); gr.addColorStop(0.4, color + '55'); gr.addColorStop(1, color + '00');
+  g.fillStyle = gr; g.fillRect(0, 0, size * 2, size * 2); return c;
+}
+const SPR = { fly: glowSprite('#d6ff72', 40), gold: glowSprite('#ffc964', 56), lamp: glowSprite('#ffc964', 90), shield: glowSprite('#9fe8ff', 80), red: glowSprite('#ff5a6a', 30), star: glowSprite('#fff3cf', 30) };
+const FSPR = {}; FLOWER_COLORS.forEach(c => FSPR[c] = glowSprite(c, 24));
+
+function hex(c) { const n = parseInt(c.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+function mix(a, b, t) { const A = hex(a), B = hex(b); return 'rgb(' + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',') + ')'; }
+
+/* ---------- scenery ---------- */
+let stars = [], grass = [];
+function buildScenery() {
+  stars = Array.from({ length: Math.round(W * H / 9000) }, () => ({ x: Math.random() * W, y: Math.random() * H * 0.7, r: Math.random() * 1.2 + .2, p: Math.random() * 6 }));
+  grass = [];
+  for (let x = -10; x < W + 10; x += 5 + Math.random() * 6) grass.push({ x, h: 18 + Math.random() * 46, lean: (Math.random() - .5) * 14, p: Math.random() * 6 });
+}
+function resize() {
+  const r = stage.getBoundingClientRect();
+  DPR = Math.min(2, window.devicePixelRatio || 1); W = r.width; H = r.height;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  buildScenery();
+  if (player) { player.x = Math.min(player.x, W - 14); player.y = Math.min(player.y, H - 14); }
+}
+
+/* ---------- audio: soft pad + random chimes ---------- */
+let ac = null, musicGain = null, chimeT = 1;
+function audio() {
+  if (!ac) {
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+    musicGain = ac.createGain(); musicGain.gain.value = muted ? 0 : 1; musicGain.connect(ac.destination);
+    // warm pad: A2 + E3 + C#4 with slow breathing
+    [110, 164.81, 277.18].forEach((f, i) => {
+      const o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
+      o.type = 'sine'; o.frequency.value = f; g.gain.value = .018;
+      lfo.frequency.value = .07 + i * .03; lg.gain.value = .012; lfo.connect(lg).connect(g.gain);
+      o.connect(g).connect(musicGain); o.start(); lfo.start();
+    });
+  }
+  if (ac.state === 'suspended') ac.resume();
+}
+function tone(freq, dur, type = 'sine', vol = .08, slide = 0) {
+  if (muted || !ac) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(freq * slide, t + dur);
+  g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .015); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur + .05);
+}
+const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+const note = n => 440 * Math.pow(2, n / 12);
+function collectSound(c) { tone(note(PENTA[Math.min(c, PENTA.length - 1)]), .5, 'triangle', .06); }
+function chime() { const n = PENTA[Math.floor(Math.random() * 8)] + 12; tone(note(n), 2.6, 'sine', .022); }
+
+/* ---------- state ---------- */
+let state = 'title', mode = 'walk', player, flies, thorns, parts, floats, trail, comps, flowers, skyStars, msg;
+let score, collected, lives, level, chain, chainT, invuln, shield, thornT, flyT, shake, time = 0, phaseCur = 0, phaseTarget = 0;
+const keys = new Set(); let target = null, off = { x: 0, y: 0 };
+
+function reset() {
+  player = { x: W / 2, y: H * .6, vx: 0, vy: 0, r: 11 };
+  flies = []; thorns = []; parts = []; floats = []; trail = []; comps = []; flowers = []; skyStars = []; msg = null;
+  score = 0; collected = 0; lives = 3; level = 1; chain = 0; chainT = 0; invuln = 0; shield = 0; thornT = 2; flyT = 0; shake = 0;
+  phaseTarget = 0;
+  for (let i = 0; i < (mode === 'walk' ? 8 : 5); i++) spawnFly();
+  hud();
+}
+function spawnFly(gold = Math.random() < (mode === 'walk' ? .04 : .06)) {
+  const m = 40;
+  flies.push({ x: m + Math.random() * (W - m * 2), y: m + Math.random() * (H - m * 2 - 60), ph: Math.random() * 7, a: .5 + Math.random() * .8, b: .4 + Math.random() * .8, gold, age: 0, life: gold ? 8 : 1e9, born: 0 });
+}
+function spawnThorn() {
+  const side = Math.floor(Math.random() * 4), pad = 30;
+  let x, y;
+  if (side === 0) { x = Math.random() * W; y = -pad; } else if (side === 1) { x = W + pad; y = Math.random() * H; }
+  else if (side === 2) { x = Math.random() * W; y = H + pad; } else { x = -pad; y = Math.random() * H; }
+  const aim = Math.atan2(player.y - y, player.x - x) + (Math.random() - .5) * .9;
+  const sp = 80 + level * 15 + Math.random() * 45, r = 9 + Math.random() * 9;
+  thorns.push({ x, y, vx: Math.cos(aim) * sp, vy: Math.sin(aim) * sp, r, rot: Math.random() * 6, vr: (Math.random() - .5) * 4, n: 7 + Math.floor(Math.random() * 4) });
+}
+function burst(x, y, color, n, sp = 140) {
+  for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, s = sp * (.3 + Math.random()); parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: .5 + Math.random() * .6, color }); }
+}
+function floatText(x, y, text, color) { floats.push({ x, y, text, color, life: 1 }); }
+function showMsg(title, sub) { msg = { title, sub, life: 3.6 }; }
+const mult = () => Math.min(5, 1 + Math.floor(chain / 4));
+
+function addFlower(x) {
+  flowers.push({ x: Math.max(8, Math.min(W - 8, x + (Math.random() - .5) * 30)), h: 14 + Math.random() * 30, g: 0, c: pick(FLOWER_COLORS), p: Math.random() * 6 });
+  if (flowers.length > 90) flowers.shift();
+}
+function addSkyStar() {
+  skyStars.push({ x: 30 + Math.random() * (W - 60), y: 20 + Math.random() * H * .4, g: 0, p: Math.random() * 6 });
+  if (skyStars.length > 80) skyStars.shift();
+  tone(note(24), 1.8, 'sine', .04); setTimeout(() => tone(note(28), 1.8, 'sine', .035), 140); setTimeout(() => tone(note(31), 2.2, 'sine', .03), 280);
+}
+
+/* ---------- HUD ---------- */
+function hud() {
+  const walk = mode === 'walk';
+  $('scoreLabel').textContent = walk ? '반딧불' : '점수';
+  $('score').textContent = walk ? collected : score;
+  $('multBox').hidden = walk; $('lives').hidden = walk;
+  $('mult').textContent = '×' + mult(); $('stars').textContent = Math.floor(collected / 10);
+  $('lives').textContent = '●'.repeat(Math.max(0, lives)) + '○'.repeat(Math.max(0, 3 - lives));
+  $('phaseName').textContent = PHASES[phaseTarget % PHASES.length].name;
+}
+
+/* ---------- update ---------- */
+function update(dt) {
+  time += dt;
+  phaseCur += (phaseTarget - phaseCur) * Math.min(1, dt * .4);
+  for (const f of flowers) f.g = Math.min(1, f.g + dt * 1.2);
+  for (const s of skyStars) s.g = Math.min(1, s.g + dt * .6);
+  if (msg) { msg.life -= dt; if (msg.life <= 0) msg = null; }
+  if (ac && !muted && (state === 'play' || state === 'title')) { chimeT -= dt; if (chimeT <= 0) { chime(); chimeT = 1.6 + Math.random() * 3; } }
+
+  if (state === 'title') { for (const f of flies) moveFly(f, dt); return; }
+  if (state !== 'play') return;
+
+  // player movement
+  let kx = 0, ky = 0;
+  if (keys.has('ArrowLeft') || keys.has('KeyA')) kx -= 1;
+  if (keys.has('ArrowRight') || keys.has('KeyD')) kx += 1;
+  if (keys.has('ArrowUp') || keys.has('KeyW')) ky -= 1;
+  if (keys.has('ArrowDown') || keys.has('KeyS')) ky += 1;
+  if (kx || ky) {
+    target = null; const l = Math.hypot(kx, ky), sp = 340;
+    player.vx += ((kx / l) * sp - player.vx) * Math.min(1, dt * 12); player.vy += ((ky / l) * sp - player.vy) * Math.min(1, dt * 12);
+  } else if (target) {
+    let vx = (target.x - player.x) * 9, vy = (target.y - player.y) * 9; const v = Math.hypot(vx, vy), max = 560;
+    if (v > max) { vx *= max / v; vy *= max / v; }
+    player.vx = vx; player.vy = vy;
+  } else { player.vx *= Math.pow(.02, dt); player.vy *= Math.pow(.02, dt); }
+  player.x = Math.max(player.r, Math.min(W - player.r, player.x + player.vx * dt));
+  player.y = Math.max(player.r, Math.min(H - player.r, player.y + player.vy * dt));
+  trail.push({ x: player.x, y: player.y }); if (trail.length > 14) trail.shift();
+
+  invuln = Math.max(0, invuln - dt); shield = Math.max(0, shield - dt); shake = Math.max(0, shake - dt * 30);
+  if (chain > 0) { chainT -= dt; if (chainT <= 0) { chain = 0; hud(); } }
+
+  // companions orbit the lantern
+  comps.forEach((c, i) => {
+    c.ang += c.sp * dt;
+    const rad = 28 + 12 * Math.sin(time * 1.3 + c.ph) + (i % 3) * 6;
+    const tx = player.x + Math.cos(c.ang) * rad, ty = player.y + Math.sin(c.ang) * rad * .8;
+    c.x += (tx - c.x) * Math.min(1, dt * 3.5); c.y += (ty - c.y) * Math.min(1, dt * 3.5);
+  });
+
+  // flies
+  flyT -= dt;
+  const want = mode === 'walk' ? 8 : 5 + Math.min(4, Math.floor(level / 2));
+  if (flies.length < want && flyT <= 0) { spawnFly(); flyT = mode === 'walk' ? .6 : .35; }
+  for (let i = flies.length - 1; i >= 0; i--) {
+    const f = flies[i]; moveFly(f, dt);
+    // gentle pull toward the lantern when close
+    const dx = player.x - f.x, dy = player.y - f.y, d = Math.hypot(dx, dy), pull = mode === 'walk' ? 90 : 55;
+    if (d < pull) { f.x += dx / d * (pull - d) * 2 * dt; f.y += dy / d * (pull - d) * 2 * dt; }
+    if (f.age > f.life) { flies.splice(i, 1); continue; }
+    if (d < player.r + (f.gold ? 14 : 10) + 4) { flies.splice(i, 1); collect(f); }
+  }
+
+  // thorns (challenge only)
+  if (mode === 'challenge') {
+    thornT -= dt;
+    if (thornT <= 0) { spawnThorn(); if (level >= 4 && Math.random() < .25) spawnThorn(); thornT = Math.max(.34, 1.5 - level * .12) * (.7 + Math.random() * .6); }
+    for (let i = thorns.length - 1; i >= 0; i--) {
+      const t = thorns[i]; t.x += t.vx * dt; t.y += t.vy * dt; t.rot += t.vr * dt;
+      if (t.x < -80 || t.x > W + 80 || t.y < -80 || t.y > H + 80) { thorns.splice(i, 1); continue; }
+      const d = Math.hypot(t.x - player.x, t.y - player.y);
+      if (shield > 0 && d < t.r + 26) {
+        thorns.splice(i, 1); burst(t.x, t.y, '#9fe8ff', 14); score += 5; floatText(t.x, t.y, '+5', '#9fe8ff'); tone(880, .15, 'sine', .04, .5); hud(); continue;
+      }
+      if (invuln <= 0 && shield <= 0 && d < t.r * .8 + player.r) {
+        thorns.splice(i, 1); lives--; invuln = 1.8; chain = 0; shake = reduceMotion ? 0 : 9;
+        // companions scatter back into the field
+        comps.splice(0, Math.ceil(comps.length / 2)).forEach(c => flies.push({ x: c.x, y: c.y, ph: Math.random() * 7, a: .6, b: .6, gold: false, age: 0, life: 1e9 }));
+        burst(player.x, player.y, '#ff5a6a', 22, 200); tone(160, .4, 'triangle', .08, .5); hud();
+        if (lives <= 0) { gameOver(); return; }
+      }
+    }
+  }
+
+  for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .94; p.vy *= .94; p.life -= dt; if (p.life <= 0) parts.splice(i, 1); }
+  for (let i = floats.length - 1; i >= 0; i--) { const f = floats[i]; f.y -= 30 * dt; f.life -= dt; if (f.life <= 0) floats.splice(i, 1); }
+}
+function collect(f) {
+  collected++; totalAll++; chain++; chainT = 2.6;
+  if (totalAll % 5 === 0) store('firefly-total', totalAll);
+  addFlower(f.x);
+  if (comps.length < 14) comps.push({ x: f.x, y: f.y, ang: Math.random() * 7, sp: (Math.random() < .5 ? -1 : 1) * (.8 + Math.random() * .8), ph: Math.random() * 6 });
+  if (mode === 'challenge') {
+    const pts = (f.gold ? 30 : 10) * mult(); score += pts;
+    if (!f.gold) floatText(f.x, f.y, '+' + pts, '#d6ff72');
+    const nl = 1 + Math.floor(score / 250);
+    if (nl > level) { level = nl; phaseTarget = level - 1; showMsg(PHASES[phaseTarget % PHASES.length].name, pick(PHRASES)); }
+  } else {
+    const np = Math.floor(collected / 25);
+    if (np > phaseTarget) { phaseTarget = np; showMsg(PHASES[np % PHASES.length].name, pick(PHRASES)); }
+  }
+  if (f.gold) {
+    burst(f.x, f.y, '#ffc964', 24, 180);
+    if (mode === 'challenge') { shield = 5; floatText(f.x, f.y, '보호막', '#ffc964'); }
+    else { floatText(f.x, f.y, pick(PHRASES), '#ffc964'); for (let i = 0; i < 4; i++) addFlower(f.x + (i - 1.5) * 24); }
+    tone(note(12), .9, 'sine', .07, 1.5);
+  } else { burst(f.x, f.y, '#d6ff72', 9); collectSound(chain); }
+  if (collected % 10 === 0) { addSkyStar(); floatText(player.x, player.y - 30, '별이 하나 떴어요', '#fff3cf'); }
+  hud();
+}
+function moveFly(f, dt) {
+  f.age += dt;
+  f.x += Math.cos(time * f.a + f.ph) * 34 * dt; f.y += Math.sin(time * f.b + f.ph * 1.3) * 26 * dt;
+  f.x = Math.max(16, Math.min(W - 16, f.x)); f.y = Math.max(16, Math.min(H - 50, f.y));
+}
+
+/* ---------- draw ---------- */
+function draw() {
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+  const P = PHASES.length, i0 = Math.floor(phaseCur) % P, i1 = (i0 + 1) % P, t = phaseCur - Math.floor(phaseCur);
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, mix(PHASES[i0].top, PHASES[i1].top, t)); bg.addColorStop(1, mix(PHASES[i0].bot, PHASES[i1].bot, t));
+  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+
+  // moon
+  const mx = W * .82, my = Math.min(90, H * .16);
+  ctx.globalAlpha = .8; ctx.drawImage(SPR.shield, mx - 80, my - 80, 160, 160); ctx.globalAlpha = 1;
+  ctx.fillStyle = '#eaf3e6'; ctx.beginPath(); ctx.arc(mx, my, 20, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = mix(PHASES[i0].top, PHASES[i1].top, t); ctx.beginPath(); ctx.arc(mx + 8, my - 5, 18, 0, Math.PI * 2); ctx.fill();
+
+  for (const s of stars) { ctx.globalAlpha = .3 + .3 * Math.sin(time * 1.5 + s.p); ctx.fillStyle = '#dfe9df'; ctx.fillRect(s.x, s.y, s.r, s.r); }
+  ctx.globalAlpha = 1;
+
+  ctx.globalCompositeOperation = 'lighter';
+  // stars earned this run, linked like a constellation
+  if (skyStars.length > 1) {
+    ctx.strokeStyle = '#fff3cf'; ctx.lineWidth = .7; ctx.globalAlpha = .18; ctx.beginPath();
+    skyStars.forEach((s, i) => i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)); ctx.stroke();
+  }
+  for (const s of skyStars) { const sz = (10 + 4 * Math.sin(time * 2 + s.p)) * s.g; ctx.globalAlpha = .9 * s.g; ctx.drawImage(SPR.star, s.x - sz, s.y - sz, sz * 2, sz * 2); }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+
+  // grass silhouette
+  ctx.strokeStyle = '#050a0e'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath();
+  for (const g of grass) { const sway = Math.sin(time * 1.2 + g.p) * 4; ctx.moveTo(g.x, H + 4); ctx.quadraticCurveTo(g.x + g.lean * .4, H - g.h * .5, g.x + g.lean + sway, H - g.h); }
+  ctx.stroke();
+  // flowers
+  ctx.lineWidth = 1.5; ctx.strokeStyle = '#0b1a14';
+  for (const f of flowers) {
+    const h = f.h * f.g, sway = Math.sin(time * 1.1 + f.p) * 3, tx = f.x + sway, ty = H - h;
+    ctx.beginPath(); ctx.moveTo(f.x, H + 2); ctx.quadraticCurveTo(f.x, H - h * .5, tx, ty); ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  for (const f of flowers) {
+    const h = f.h * f.g, sway = Math.sin(time * 1.1 + f.p) * 3, s = (8 + 2 * Math.sin(time * 2 + f.p)) * f.g;
+    ctx.globalAlpha = .9; ctx.drawImage(FSPR[f.c], f.x + sway - s, H - h - s, s * 2, s * 2);
+  }
+
+  for (const f of flies) {
+    const pulse = .65 + .35 * Math.sin(time * 3.5 + f.ph * 3);
+    const fade = f.gold && f.life - f.age < 2 ? (Math.sin(time * 20) > 0 ? 1 : .3) : 1;
+    const spr = f.gold ? SPR.gold : SPR.fly, s = (f.gold ? 34 : 24) * pulse;
+    ctx.globalAlpha = fade; ctx.drawImage(spr, f.x - s, f.y - s, s * 2, s * 2);
+  }
+  ctx.globalAlpha = 1;
+  const inGame = state === 'play' || state === 'pause' || state === 'over';
+  if (inGame) {
+    for (const p of parts) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3); }
+    ctx.globalAlpha = .55;
+    for (const t of thorns) ctx.drawImage(SPR.red, t.x - t.r * 2, t.y - t.r * 2, t.r * 4, t.r * 4);
+    ctx.globalAlpha = 1;
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  if (inGame) {
+    for (const t of thorns) drawThorn(t);
+    if (state !== 'over') {
+      const blink = invuln > 0 && Math.sin(time * 30) > 0;
+      ctx.globalCompositeOperation = 'lighter';
+      for (const c of comps) { const s = 14 + 4 * Math.sin(time * 4 + c.ph); ctx.globalAlpha = .9; ctx.drawImage(SPR.fly, c.x - s, c.y - s, s * 2, s * 2); }
+      trail.forEach((p, i) => { ctx.globalAlpha = i / trail.length * .22; ctx.drawImage(SPR.lamp, p.x - 30, p.y - 30, 60, 60); });
+      ctx.globalAlpha = blink ? .3 : 1;
+      const glow = 70 + Math.min(40, comps.length * 3);
+      ctx.drawImage(SPR.lamp, player.x - glow, player.y - glow, glow * 2, glow * 2);
+      if (shield > 0) { ctx.globalAlpha = shield < 1.2 && Math.sin(time * 18) > 0 ? .3 : .8; ctx.drawImage(SPR.shield, player.x - 54, player.y - 54, 108, 108); }
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = blink ? .4 : 1;
+      ctx.fillStyle = '#fff4d6'; ctx.beginPath(); ctx.arc(player.x, player.y, player.r * .55, 0, Math.PI * 2); ctx.fill();
+      if (shield > 0) { ctx.strokeStyle = '#9fe8ffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(player.x, player.y, 26, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    }
+    ctx.textAlign = 'center'; ctx.font = '600 14px "IBM Plex Sans KR", sans-serif';
+    for (const f of floats) { ctx.globalAlpha = Math.min(1, f.life * 2); ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y); }
+    ctx.globalAlpha = 1;
+    if (mode === 'challenge' && chain > 0 && state === 'play') {
+      ctx.strokeStyle = '#d6ff72'; ctx.globalAlpha = .45; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.arc(player.x, player.y, 18, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (chainT / 2.6)); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+  if (msg && state === 'play') {
+    const a = Math.min(1, msg.life, (3.6 - msg.life) * 2);
+    ctx.globalAlpha = a; ctx.textAlign = 'center'; ctx.fillStyle = '#8fa39a';
+    ctx.font = '600 12px "IBM Plex Sans KR", sans-serif'; ctx.fillText(msg.title, W / 2, H * .36 - 30);
+    ctx.fillStyle = '#e6eee2'; ctx.font = '700 ' + Math.min(26, W / 14) + 'px "Gowun Batang", serif'; ctx.fillText(msg.sub, W / 2, H * .36);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+function drawThorn(t) {
+  ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.rot);
+  ctx.beginPath();
+  for (let i = 0; i < t.n * 2; i++) { const a = i / (t.n * 2) * Math.PI * 2, r = i % 2 ? t.r * .5 : t.r; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+  ctx.closePath(); ctx.fillStyle = '#2a0d14'; ctx.fill(); ctx.strokeStyle = '#ff5a6a'; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.restore();
+}
+
+/* ---------- flow ---------- */
+function show(id) { for (const s of ['startScreen', 'pauseScreen', 'overScreen']) $(s).hidden = s !== id; }
+function start(m) {
+  if (m) mode = m; audio(); reset(); phaseCur = 0; state = 'play'; show(null); $('pauseBtn').textContent = '쉬기';
+  showMsg(PHASES[0].name, mode === 'walk' ? '천천히 걸어 볼까요' : '가시를 조심하세요');
+}
+function pause() { if (state !== 'play') return; state = 'pause'; $('pauseQuote').textContent = pick(PHRASES); show('pauseScreen'); $('pauseBtn').textContent = '계속하기'; store('firefly-total', totalAll); }
+function resume() { if (state !== 'pause') return; state = 'play'; show(null); $('pauseBtn').textContent = '쉬기'; last = performance.now(); }
+function home() { store('firefly-total', totalAll); state = 'title'; mode = 'walk'; reset(); totalLine(); show('startScreen'); }
+function gameOver() {
+  state = 'over'; store('firefly-total', totalAll);
+  const isBest = score > best; if (isBest) { best = score; store('firefly-best', best); }
+  $('finalScore').textContent = score;
+  $('overLine').textContent = (isBest ? '새 최고 기록이에요. ' : '최고 기록 ' + best + '점. ') + '반딧불 ' + collected + '마리, 별 ' + Math.floor(collected / 10) + '개를 밝혔어요.';
+  $('overQuote').textContent = pick(PHRASES);
+  setTimeout(() => { if (state === 'over') { show('overScreen'); $('againBtn').focus(); } }, 800);
+  tone(note(-5), 1.4, 'sine', .06, .75);
+}
+function totalLine() {
+  const parts = [];
+  if (totalAll) parts.push('지금까지 밝힌 반딧불 ' + totalAll + '마리');
+  if (best) parts.push('도전 최고 ' + best + '점');
+  $('totalLine').textContent = parts.join(' · ');
+}
+
+$('walkBtn').onclick = () => start('walk'); $('challengeBtn').onclick = () => start('challenge');
+$('againBtn').onclick = () => start(); $('resumeBtn').onclick = resume;
+$('homeBtn1').onclick = home; $('homeBtn2').onclick = home;
+$('pauseBtn').onclick = () => state === 'play' ? pause() : resume();
+function syncMute() { $('muteBtn').textContent = muted ? '소리 꺼짐' : '소리 켜짐'; if (musicGain) musicGain.gain.value = muted ? 0 : 1; }
+$('muteBtn').onclick = () => { muted = !muted; store('firefly-muted', muted ? '1' : '0'); audio(); syncMute(); };
+
+function stagePoint(e) { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+stage.addEventListener('pointerdown', e => {
+  if (state !== 'play') return;
+  const p = stagePoint(e);
+  off = e.pointerType === 'mouse' ? { x: 0, y: 0 } : { x: player.x - p.x, y: player.y - p.y };
+  target = { x: p.x + off.x, y: p.y + off.y }; stage.setPointerCapture?.(e.pointerId);
+});
+stage.addEventListener('pointermove', e => {
+  if (state !== 'play' || !(e.pointerType === 'mouse' || e.buttons)) return;
+  const p = stagePoint(e); target = { x: p.x + off.x, y: p.y + off.y };
+});
+addEventListener('keydown', e => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (e.code === 'KeyP' || e.code === 'Escape') { state === 'play' ? pause() : resume(); return; }
+  if ((e.code === 'Enter' || e.code === 'Space') && state === 'over' && !$('overScreen').hidden) { start(); return; }
+  keys.add(e.code);
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => { keys.clear(); pause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { pause(); if (ac) ac.suspend(); } else if (ac) ac.resume(); });
+new ResizeObserver(resize).observe(stage);
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (state !== 'pause') update(dt);
+  draw(); requestAnimationFrame(loop);
+}
+resize(); reset(); syncMute(); totalLine(); show('startScreen');
+requestAnimationFrame(loop);
+})();
+</script>
+</body></html>
